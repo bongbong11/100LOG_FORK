@@ -1,6 +1,6 @@
 # 100LOG_FORK — 씬리더용 서사연속성 모듈 설계서
 
-> 이 저장소는 원본 100LOG의 문제의식과 정보 처리 방식을 참고하여, 씬리더(Scene Reader Hub)용 **서사연속성 판독 모듈**을 새로 설계하기 위한 작업 저장소입니다.
+> 이 저장소는 원본 100LOG의 문제의식과 정보 처리 방식을 참고하여, 씬리더(Scene Reader Hub)와 연동 가능한 **서사연속성 판독 확장**을 새로 설계하기 위한 작업 저장소입니다.
 >
 > 원본 코드를 단순 복제하거나 100LOG를 그대로 씬리더에 합치는 프로젝트가 아닙니다. 제작자의 허락을 받은 범위 안에서 원본의 좋은 정보 처리 원리와 연속성 카테고리를 참고하되, 읽기 기준·모델 운용·저장·주입·프롬프트 조립·UI는 씬리더 구조에 맞게 새로 작성합니다.
 
@@ -29,11 +29,9 @@
 기존 공달 100LOG 포크 기능
 ```
 
-이 표기는 사용자가 기능의 계열과 목적을 혼동하지 않도록 유지합니다.
-
 ---
 
-## 1. 목표
+## 1. 핵심 목표
 
 씬리더와 100LOG류 확장은 바라보는 방향이 다릅니다.
 
@@ -41,7 +39,7 @@
 |---|---|
 | 씬리더 | 다음 턴, 다음 장면, 미래 전개를 판독하는 확장 |
 | 100LOG류 | 최근 과거 사건, 약속, 비밀, 정정, 인물별 지식 차이를 기억하는 확장 |
-| 100LOG_FORK | 과거 사건을 현재 압력으로 해석하고, 다음 턴 조건으로 변환하는 씬리더 연동 모듈 |
+| 100LOG_FORK | 과거 사건을 현재 압력으로 해석하고, 다음 턴 조건으로 변환하는 씬리더 연동 확장 |
 
 본 모듈은 단순 기억 저장소가 아닙니다.
 
@@ -66,9 +64,89 @@ Do not treat the confession as resolved, casual, or repaired unless Vivienne res
 
 ---
 
-## 2. 참고할 것과 바꿀 것
+## 2. 개발 원칙
 
-### 2.1 100LOG에서 참고할 것
+### 2.1 초기 버전은 독립 확장으로 제작
+
+초기 버전에서는 씬판독기 UI에 아무것도 추가하지 않습니다.
+
+```text
+100LOG_FORK 독립 UI
+100LOG_FORK 독립 설정
+100LOG_FORK 독립 저장소
+100LOG_FORK 독립 주입/청소 기능
+```
+
+씬판독기 쪽에는 초기 버전에서 새 탭, 버튼, 패널을 추가하지 않습니다.
+
+이유:
+
+- 문제 발생 시 원인을 100LOG_FORK와 씬판독기 사이에서 분리하기 위함
+- 기존 씬판독기의 자동/수동 실행, NSFW 판독, generation cycle, swipe/edit/delete 흐름을 건드리지 않기 위함
+- 기능이 충분히 안정화된 뒤 씬판독기 탭으로 그대로 이식하기 위함
+
+### 2.2 UI는 나중에 씬판독기 탭으로 옮길 수 있게 설계
+
+초기 UI는 독립 확장 안에 만들지만, 나중에 씬판독기 탭으로 그대로 옮길 수 있게 구성합니다.
+
+권장 UI 구조:
+
+```text
+100LOG_FORK / 100로그 포크
+├─ 사용 ON/OFF
+├─ 초기 베이스라인 판독
+├─ 판독 범위 선택
+├─ 저장된 서사연속성 기록
+├─ 기록 수정/삭제/고정
+├─ STORY_CONTINUITY 주입 설정
+├─ 주입 위치 선택
+├─ 주입 청소
+└─ 마지막 작업/오류
+```
+
+추후 씬판독기에 탭을 추가할 경우, 이 UI를 거의 그대로 탭 내부에 이식합니다.
+
+### 2.3 연동 기준은 설치 여부가 아니라 사용 ON/OFF 상태
+
+씬판독기와 연동할 때, 기준은 `100LOG_FORK가 설치되어 있는가`가 아닙니다.
+
+기준은 반드시 다음이어야 합니다.
+
+```text
+100LOG_FORK가 설치되어 있고,
+100LOG_FORK 내부의 사용 ON/OFF가 ON인가?
+```
+
+동작 규칙:
+
+| 상태 | 씬판독기 동작 |
+|---|---|
+| 100LOG_FORK 미설치 | 씬판독기 기본 서사연속성 사용 |
+| 100LOG_FORK 설치됨 + 사용 OFF | 씬판독기 기본 서사연속성 사용 |
+| 100LOG_FORK 설치됨 + 사용 ON | 씬판독기 기본 서사연속성을 100LOG_FORK 결과로 대체 |
+
+즉, 100LOG_FORK가 설치되어 있어도 사용자가 `사용 안 함`을 누르면 씬판독기는 기존 자체 서사연속성 기능을 그대로 사용합니다.
+
+### 2.4 대체 방식
+
+씬판독기 기본 서사연속성과 100LOG_FORK 서사연속성은 동시에 같은 역할로 작동하지 않습니다.
+
+```text
+나쁨:
+씬판독기 기본 서사연속성 + 100LOG_FORK STORY_CONTINUITY 동시 주입
+
+좋음:
+100LOG_FORK 사용 ON이면 100LOG_FORK가 해당 영역을 대체
+100LOG_FORK 사용 OFF이면 씬판독기 기본 기능 사용
+```
+
+이 규칙은 중복 판독, 중복 주입, 서로 다른 기록 충돌을 막기 위한 핵심 원칙입니다.
+
+---
+
+## 3. 100LOG에서 참고할 것과 바꿀 것
+
+### 3.1 참고할 것
 
 - 최근 RP에서 어떤 정보를 연속성 관리 대상으로 삼는지
 - 약속, 계획, 비밀, 은폐, 거짓말, 오해, 정정, 인물별 지식 차이의 카테고리
@@ -79,9 +157,9 @@ Do not treat the confession as resolved, casual, or repaired unless Vivienne res
 - 완료·취소·갱신 판정 원칙
 - 요약·하이드 후 중요한 미해결 조건만 유지하는 문제의식
 
-### 2.2 씬리더식으로 바꿀 것
+### 3.2 씬리더식으로 바꿀 것
 
-- 읽기 범위는 100개 고정이 아니라 씬리더 설정과 초기 판독 범위 기준으로 운용
+- 최근 100개 고정 운용 대신 `초기 베이스라인 + 매턴 delta` 구조 사용
 - 모델 운용은 `확장 연결모델 후보 추출 → JEV 검증/정제 → 씬판독 delta 갱신` 구조로 변경
 - 생성 가로채기, 숨은 초안, 자동 재작성은 기본 설계에서 제외
 - 저장 범위는 현재 채팅 기준을 기본값으로 사용
@@ -92,10 +170,10 @@ Do not treat the confession as resolved, casual, or repaired unless Vivienne res
 
 ---
 
-## 3. 전체 운용 흐름
+## 4. 전체 운용 흐름
 
 ```text
-1. 사용자가 100LOG_FORK / 서사연속성 기능 ON
+1. 사용자가 100LOG_FORK 사용 ON
 
 2. 초기 베이스라인 판독
    - 현재 채팅의 선택 범위를 넓게 읽음
@@ -105,8 +183,8 @@ Do not treat the confession as resolved, casual, or repaired unless Vivienne res
 
 3. 평소 RP 진행
 
-4. 씬판독 실행 시 증분 판독
-   - 씬판독기가 매턴 원래 읽는 범위만 읽음
+4. 증분 판독
+   - 씬판독기가 매턴 원래 읽는 범위 또는 100LOG_FORK가 설정한 범위 안에서 변화분 확인
    - 새 변화분만 continuity_delta로 추출
    - 기존 저장 기록을 add/update/resolve/cancel/supersede
 
@@ -123,9 +201,9 @@ Do not treat the confession as resolved, casual, or repaired unless Vivienne res
 
 ---
 
-## 4. 읽기 기준
+## 5. 읽기 기준
 
-### 4.1 읽기 대상
+### 5.1 읽기 대상
 
 읽기 대상은 실제 RP 원문으로 취급할 수 있는 visible 메시지입니다.
 
@@ -144,7 +222,7 @@ Do not treat the confession as resolved, casual, or repaired unless Vivienne res
 - 내부 프롬프트
 - 명확히 분리된 비스토리 OOC 설정문
 
-### 4.2 초기 베이스라인 판독
+### 5.2 초기 베이스라인 판독
 
 초기 판독은 자동으로 무조건 실행하지 않고, 사용자가 직접 실행합니다.
 
@@ -161,22 +239,16 @@ Do not treat the confession as resolved, casual, or repaired unless Vivienne res
 
 기본값은 `현재 채팅 최근 20턴`입니다.
 
-이유:
-
-- 최근 흐름을 충분히 잡음
-- 모델/JEV 비용을 과하게 쓰지 않음
-- 다른 세계선이나 테스트 채팅이 섞일 위험을 줄임
-
 `같은 캐릭터의 최근 열린 채팅 포함`은 고급 옵션으로만 제공합니다. 같은 캐릭터 카드라도 다른 세계선이나 IF 루트일 수 있기 때문입니다.
 
-### 4.3 이후 증분 판독
+### 5.3 이후 증분 판독
 
 초기화 이후에는 전체를 다시 읽지 않습니다.
 
 ```text
-씬판독기가 원래 읽는 최근 범위
-+
 직전 cursor 이후 새 visible 메시지
++
+씬판독기가 원래 읽는 최근 범위
 +
 기존 활성 서사연속성 기록
 ```
@@ -194,9 +266,9 @@ ignore    저장할 변화 없음
 
 ---
 
-## 5. 모델 운용
+## 6. 모델 운용
 
-### 5.1 초기 1차 판독: 확장 연결모델
+### 6.1 초기 1차 판독: 확장 연결모델
 
 초기 베이스라인 판독에서는 확장에 연결된 모델이 넓은 범위를 읽고 후보를 뽑습니다.
 
@@ -208,7 +280,7 @@ ignore    저장할 변화 없음
 각 후보는 과거 사건, 현재 압력, 다음 턴 제약, 인물별 지식 경계, 원문 근거를 포함한다.
 ```
 
-### 5.2 초기 2차 판독: JEV 검증
+### 6.2 초기 2차 판독: JEV 검증
 
 JEV는 후보를 새로 창작하는 모델이 아니라, 후보의 근거와 상태를 검증하는 역할로 사용합니다.
 
@@ -220,11 +292,9 @@ JEV는 후보를 새로 창작하는 모델이 아니라, 후보의 근거와 �
 - 인물별 지식 상태가 실제 정보 흐름에 맞는가
 - 다음 턴 제약으로 저장할 가치가 있는가
 
-### 5.3 매턴 증분 판독: 씬판독 결과에 포함
+### 6.3 매턴 증분 판독
 
-씬판독기가 매턴 읽는 입력에 가벼운 `story_continuity_delta` 섹션을 포함합니다.
-
-역할:
+매턴에는 무거운 재판독을 하지 않습니다.
 
 ```text
 이번 새 메시지에서 기존 서사연속성 기록에 영향을 줄 변화가 있는지 찾는다.
@@ -242,9 +312,9 @@ JEV는 후보를 새로 창작하는 모델이 아니라, 후보의 근거와 �
 
 ---
 
-## 6. 제외 기능
+## 7. 제외 기능
 
-### 6.1 생성 가로채기 제외
+### 7.1 생성 가로채기 제외
 
 초기 버전에서는 100LOG식 생성 가로채기를 구현하지 않습니다.
 
@@ -264,7 +334,7 @@ JEV는 후보를 새로 창작하는 모델이 아니라, 후보의 근거와 �
 - JEV 비용 증가
 - 씬리더의 역할이 사전 예방에서 사후 검수/재작성으로 흐려질 위험
 
-### 6.2 자동 재작성 제외
+### 7.2 자동 재작성 제외
 
 본 모듈은 답변 생성 후 틀린 답변을 폐기하고 다시 쓰게 하는 구조가 아닙니다.
 
@@ -291,7 +361,7 @@ JEV는 후보를 새로 창작하는 모델이 아니라, 후보의 근거와 �
 
 ---
 
-## 7. 판독 카테고리
+## 8. 판독 카테고리
 
 v1 기본 카테고리입니다.
 
@@ -308,26 +378,9 @@ v1 기본 카테고리입니다.
 | `recent_event` | 다음 턴에 직접 영향이 있는 최근 사건 |
 | `state_change` | 현재 장면 또는 관계의 유효 상태 변화 |
 
-우선순위 기본값:
-
-```text
-1. user_correction
-2. knowledge_boundary
-3. concealed_truth
-4. pending_commitment
-5. unresolved_tension
-6. misunderstanding
-7. causal_link
-8. relationship_shift
-9. state_change
-10. recent_event
-```
-
 ---
 
-## 8. 기록 스키마
-
-서사연속성 기록은 단순 기억이 아니라 다음 턴 제약을 포함합니다.
+## 9. 기록 스키마 초안
 
 ```json
 {
@@ -358,19 +411,22 @@ v1 기본 카테고리입니다.
 }
 ```
 
-### knowledge 상태값
+중요 필드:
 
-v1 권장값:
+| field | 의미 |
+|---|---|
+| `past_event` | 과거에 실제로 발생한 근거 사건 |
+| `current_pressure` | 현재 장면에 남아 있는 압력 또는 유효 상태 |
+| `next_turn_constraint` | 다음 답변이 깨뜨리면 안 되는 조건 |
+| `knowledge` | 인물별 지식 상태 |
+| `evidence` | 원문 근거 |
+| `expires_when` | 완료/취소/이월 조건 |
 
-```text
-known        알고 있음
-unknown      아직 모름
-partial      일부만 알고 있음
-suspects     의심함
-false_belief 잘못 믿고 있음
-```
+---
 
-최소 구현은 다음 셋으로 시작할 수 있습니다.
+## 10. 지식 상태
+
+v1 기본값:
 
 ```text
 known
@@ -378,49 +434,40 @@ unknown
 partial
 ```
 
----
-
-## 9. 저장 구조
-
-기본 저장 범위는 현재 채팅입니다.
+확장 후보:
 
 ```text
-기본:
-현재 채팅 단위 저장
-
-고급 옵션:
-같은 캐릭터 카드 공유
-페르소나+캐릭터 조합 공유
-직접 선택한 채팅 포함
+suspects
+misunderstands
+believes_false
+withheld_from
 ```
 
-저장 구조 예시:
+원칙:
 
-```json
-{
-  "schema": "scene_reader_story_continuity.v1",
-  "enabled": true,
-  "chat_id": "current_chat",
-  "initialized": true,
-  "baseline": {
-    "created_at": 0,
-    "source_scope": "current_chat_recent_20_turns",
-    "verified_by_jev": true
-  },
-  "cursor": {
-    "last_visible_message_id": 147,
-    "last_signature": "147:hash"
-  },
-  "records": [],
-  "journal": []
-}
-```
+- 이름이 언급되었다고 해서 `known` 처리하지 않음
+- 장면에 없었다는 이유만으로 `unknown` 처리하지 않음
+- 실제 전달, 목격, 기록 접근, 감시, 통신, 폭로 등 정보 흐름이 있어야 `known`
+- 비밀 유지, 미전달, 은폐, 실패한 전달, 명시적 무지가 있어야 `unknown`
+- 일부만 알면 `partial`
 
 ---
 
-## 10. 주입 위치 및 조립
+## 11. 완료 / 취소 / 갱신 원칙
 
-### 10.1 기본 주입 위치
+- 시간이 지났다고 완료 처리하지 않음
+- 언급이 없어졌다고 취소 처리하지 않음
+- 비슷한 분위기라고 해결 처리하지 않음
+- 실제 약속한 장소 도착, 행동 수행, 명시적 답변, 폭로, 합의가 있어야 완료 가능
+- 명시적 취소, 거절, 파기, 철회가 있어야 취소 가능
+- 새 정보가 기존 기록을 대체하면 supersede 처리
+- 불명확하면 active 상태를 유지하고 재판독 대상으로 둠
+
+---
+
+## 12. 주입 설계
+
+### 12.1 기본 주입 위치
 
 기본 주입 위치는 **월드인포 / 로어북 뒤**입니다.
 
@@ -434,27 +481,15 @@ Scene Reader 판독 블록
 응답 지시 / 출력 형식
 ```
 
-이 위치를 쓰는 이유:
+이 위치를 기본으로 잡는 이유:
 
-```text
-고정 설정 → 최근 서사 상태 → 다음 턴 판독
-```
+1. 로어북은 고정 설정을 제공함
+2. 서사연속성은 그 설정 위에서 최근 RP 때문에 생긴 유효 상태를 얹음
+3. 씬리더 판독은 이 상태를 바탕으로 다음 턴을 판단함
 
-### 10.2 depth 주입은 기본값이 아님
+### 12.2 CardInjector식 위치 지정
 
-depth 주입은 너무 강하게 읽힐 수 있으므로 기본값으로 쓰지 않습니다.
-
-위험:
-
-- 과거 사건이 현재 장면보다 과하게 우선됨
-- 이미 움직일 수 있는 감정선이 고정됨
-- 장면 전환이 둔해짐
-- 모델이 기록을 대사처럼 반복함
-- 씬리더의 미래 판독보다 과거 기록이 강하게 작동함
-
-### 10.3 CardInjector식 위치 지정
-
-고급 사용자를 위해 주입 위치를 바꿀 수 있게 합니다.
+고급 사용자를 위해 프리셋 위치 지정 옵션을 둡니다.
 
 예정 옵션:
 
@@ -466,20 +501,39 @@ depth 주입은 너무 강하게 읽힐 수 있으므로 기본값으로 쓰지 
 - 마지막 유저 메시지 전
 - 사용자 지정 프리셋 위치
 
-### 10.4 replace 방식
+기본은 월드인포 후입니다.
 
-append가 아니라 replace를 기본으로 합니다.
+### 12.3 replace 방식
+
+서사연속성 블록은 매번 새로 덧붙이지 않습니다.
 
 ```text
 기존 <STORY_CONTINUITY>...</STORY_CONTINUITY> 블록이 있으면 교체
-없으면 지정 위치에 삽입
+없으면 지정된 위치에 삽입
 ```
 
-이 방식으로 중복 주입과 찌꺼기를 방지합니다.
+이 방식으로 중복 주입과 주입 찌꺼기를 방지합니다.
+
+### 12.4 주입 청소
+
+청소 버튼:
+
+```text
+[서사연속성 주입 청소]
+```
+
+청소 대상:
+
+- `<STORY_CONTINUITY>...</STORY_CONTINUITY>`
+- 구버전 `<MEMORY_CONTINUITY>...</MEMORY_CONTINUITY>`
+- 구버전 `<SCENE_MEMORY>...</SCENE_MEMORY>`
+- 기타 본 확장이 만든 주입 블록
+
+청소 버튼은 주입 찌꺼기만 지우며, 저장된 판독 기록은 삭제하지 않습니다.
 
 ---
 
-## 11. STORY_CONTINUITY 블록 예시
+## 13. 주입 블록 예시
 
 ```text
 <STORY_CONTINUITY>
@@ -487,198 +541,130 @@ Recent story-state constraints. Use these after lore and before deciding the nex
 They are not permanent lore, dialogue, or a full summary.
 
 - [unresolved_tension] Lucas confessed love to Vivienne; she has not answered.
-  Constraint: Do not treat the confession as resolved, casual, or repaired unless Vivienne responds in-scene.
+  Constraint: Do not treat the confession as resolved or casual.
 
 - [knowledge_boundary] Dominic does not know the exact private confession.
-  Constraint: Dominic may react only to information he has actually witnessed, inferred, or received.
+  Constraint: Dominic may react only to information he has actually witnessed or received.
 
 - [concealed_truth] Vivienne's Omega status remains dangerous if exposed to Wade.
-  Constraint: Preserve concealment pressure in family-facing scenes unless exposure is explicitly chosen.
+  Constraint: Preserve concealment pressure in family-facing scenes.
 </STORY_CONTINUITY>
 ```
 
-주입 시 전체 기록을 모두 넣지 않습니다.
+주입 원칙:
 
-```text
-기본: 최대 5개
-정밀: 최대 8개
-수동 전체: 최대 12개
-```
+- 저장 기록 전체를 넣지 않음
+- 활성 기록 중 현재 턴과 관련 높은 항목만 선별
+- 기본 최대 5개
+- 정밀 모드 최대 8개
+- 수동 전체 주입 최대 12개
 
 ---
 
-## 12. UI 계획
+## 14. 씬판독기 연동 API 초안
 
-씬리더허브 안에 새 탭을 둘 수 있습니다. 탭 이름은 추후 씬리더 쪽에서 결정합니다.
+초기 버전은 독립 UI로 운용하지만, 나중에 씬판독기가 선택적으로 읽을 수 있도록 window API를 제공합니다.
 
-후보:
-
-- 서사연속성
-- 기억판독
-- 스토리관리
-
-탭 내부에는 고정으로 다음 문구를 표시합니다.
-
-```text
-기존 공달 100LOG 포크 기능
+```js
+window.SceneReaderStoryContinuity = {
+  isAvailable() {},
+  isEnabled() {},
+  getStatus() {},
+  getRecords() {},
+  getInjectionBlock() {},
+  runBaseline() {},
+  runDelta() {},
+  clearInjection() {}
+};
 ```
 
-기본 UI:
+씬판독기 쪽 연동 판단 예시:
 
-```text
-□ 100로그 포크 / 서사연속성 사용
+```js
+const external = window.SceneReaderStoryContinuity;
+const useFork = Boolean(external?.isAvailable?.() && external?.isEnabled?.());
 
-초기 판독:
-[초기 베이스라인 판독 시작]
-범위: 최근 20턴 / 최근 30턴 / 현재 채팅 전체 / 직접 선택
-
-증분 판독:
-□ 씬판독 시 변화분 자동 반영
-최대 delta 수: 3 / 5
-
-주입:
-□ STORY_CONTINUITY 주입
-위치: 월드인포 후 / 사용자 지정
-최대 주입 개수: 5 / 8 / 12
-
-관리:
-[수동 재판독]
-[선택 기록 고정]
-[완료 처리]
-[삭제]
-[주입 찌꺼기 청소]
-[저장 기록 초기화]
+if (useFork) {
+  // 100LOG_FORK가 켜져 있으므로 씬판독기 기본 서사연속성을 대체한다.
+  const storyContinuityBlock = external.getInjectionBlock();
+} else {
+  // 미설치 또는 설치되어 있어도 사용 OFF이므로 씬판독기 기본 서사연속성을 사용한다.
+  const storyContinuityBlock = sceneReaderDefaultStoryContinuity();
+}
 ```
+
+핵심은 `isEnabled()`입니다. 설치되어 있어도 사용자가 100LOG_FORK를 사용 안 함으로 둔 경우에는 대체하지 않습니다.
+
+---
+
+## 15. 저장 범위
 
 기본값:
 
 ```text
-사용: OFF
-초기 판독 범위: 최근 20턴
-증분 판독: ON, 단 기능 사용 시에만
-주입 위치: 월드인포 후
-삽입 방식: replace
-최대 주입 개수: 5
-자동 재작성: OFF / 미구현
+현재 채팅 단위 저장
 ```
+
+고급 옵션 후보:
+
+```text
+같은 캐릭터 카드 공유
+페르소나 + 캐릭터 조합 공유
+직접 선택한 채팅 포함
+```
+
+기본을 현재 채팅으로 두는 이유:
+
+- 같은 캐릭터 카드라도 다른 세계선/IF/테스트 채팅이 있을 수 있음
+- 잘못 섞이면 서사연속성 기록이 오염됨
+- 초기 안정성을 우선해야 함
 
 ---
 
-## 13. 청소 기능
+## 16. 구현 단계
 
-### 13.1 주입 찌꺼기 청소
+### Phase 0. 설계 문서
 
-```text
-[주입 찌꺼기 청소]
-```
+- 원본 100LOG 참고 범위 정리
+- 씬리더식 서사연속성 구조 정의
+- 독립 UI / 추후 탭 이식 가능 구조 확정
 
-삭제 대상:
+### Phase 1. 100LOG_FORK 독립 확장
 
-- `<STORY_CONTINUITY>...</STORY_CONTINUITY>`
-- 구버전 `<MEMORY_CONTINUITY>...</MEMORY_CONTINUITY>`
-- 구버전 `<SCENE_MEMORY>...</SCENE_MEMORY>`
-- 본 확장이 만든 기타 주입 블록
+- 씬판독기 UI 수정 없음
+- 자체 UI에서 초기 판독/저장/주입/청소 제공
+- 생성 가로채기 없음
+- 자동 재작성 없음
+- 사용 ON/OFF 상태 제공
 
-주의:
+### Phase 2. 선택 연동
 
-- 저장 기록은 삭제하지 않음
-- 프롬프트에 남은 삽입물만 제거
-
-### 13.2 저장 기록 초기화
-
-```text
-[저장 기록 초기화]
-```
-
-삭제 대상:
-
-- records
-- journal
-- baseline
-- cursor
-
-주의:
-
-- 사용자가 직접 고정한 기록은 삭제 전 확인
-- 주입 블록은 별도 청소 버튼으로 제거
-
----
-
-## 14. 구현 단계
-
-### Phase 1. 설계 고정
-
-- 원본 100LOG 링크 및 참고 범위 명시
-- 100LOG_FORK 명칭 고정
-- 씬리더용 스키마 확정
-- 초기 판독 / 증분 판독 흐름 확정
-- 주입 위치와 replace 방식 확정
-
-### Phase 2. 외부 확장 v0
-
-- 단독 확장으로 제작
-- 현재 채팅 visible 메시지 읽기
-- 초기 베이스라인 판독 버튼
-- records 저장
-- STORY_CONTINUITY 블록 미리보기
 - window API 제공
+- 씬판독기는 `isAvailable()`와 `isEnabled()`를 확인
+- 100LOG_FORK 사용 ON이면 씬판독기 기본 서사연속성을 대체
+- 100LOG_FORK 사용 OFF이면 씬판독기 기본 서사연속성 유지
 
-예정 API:
+### Phase 3. 씬판독기 UI 병합 검토
 
-```js
-window.SceneReaderStoryContinuity = {
-  runBaselineScan,
-  runDeltaScan,
-  getRecords,
-  getInjectionBlock,
-  clearInjectionBlock,
-  clearRecords
-};
-```
+- 충분히 안정화된 뒤 탭 추가
+- 탭 이름은 씬리더 쪽에서 별도 결정
+- 탭 내부에는 `기존 공달 100LOG 포크 기능` 고정 표기
+- 독립 확장 UI를 거의 그대로 이식
 
-### Phase 3. 씬리더허브 연동
+### Phase 4. 완전 통합 검토
 
-- 씬리더허브가 외부 확장 존재 여부 감지
-- 씬리더허브 내부 탭에 `기존 공달 100LOG 포크 기능` 표기
-- STORY_CONTINUITY 블록을 월드인포 후 위치에 조립
-- CardInjector식 위치 지정 옵션 추가
-
-### Phase 4. 증분 처리 강화
-
-- cursor 저장
-- message signature 저장
-- journal rollback
-- 리롤/수정/삭제 감지
-- 요약·하이드 시 carryover 처리
-
-### Phase 5. 통합 검토
-
-- 외부 확장으로 충분히 테스트
-- 씬리더허브 UI에 병합 여부 검토
-- 자동 재작성은 기본 제외 상태 유지
-- 필요 시 고급 충돌 경고 모드만 별도 검토
+- 저장소/주입/설정 이전 여부 검토
+- 외부 확장 없이 씬판독기 내부 기능으로 포함할지 결정
 
 ---
 
-## 15. 최종 설계 요약
+## 17. 최종 원칙
 
 ```text
-읽기 추적과 정보 처리 원리:
-100LOG 참고
-
-읽는 기준, 모델 운용, 저장 범위, 주입 위치, 프롬프트 조립:
-씬리더 방식으로 재설계
-
-기본 운용:
-초기 베이스라인 판독 + 매턴 증분 delta 갱신
-
-주입:
-월드인포 후 <STORY_CONTINUITY> replace 삽입
-
-기본 제외:
-생성 가로채기, 숨은 초안, 자동 재작성, 답변 공개 전 검수
-
-표기:
-외부 확장명은 100LOG_FORK / 100로그 포크
-씬리더 내부 UI에는 기존 공달 100LOG 포크 기능 문구 고정
+읽기 추적과 정보 정리 원리는 100LOG에서 참고한다.
+모델 운용, 판독 목적, 저장 범위, 주입 위치, 프롬프트 조립, UI는 씬리더식으로 바꾼다.
+초기에는 독립 확장으로 충분히 검증한다.
+씬판독기와 연동할 때는 설치 여부가 아니라 사용 ON/OFF 상태를 기준으로 한다.
+100LOG_FORK 사용 ON이면 씬판독기 기본 서사연속성을 대체한다.
+100LOG_FORK 사용 OFF이면 씬판독기 기본 서사연속성을 그대로 사용한다.
 ```
