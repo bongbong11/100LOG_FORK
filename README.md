@@ -1,4 +1,4 @@
-# 100LOG_FORK — 씬리더용 서사연속성 모듈 설계서
+# 100LOG_FORK — 씬리더용 서사연속성 판독 확장 설계서
 
 > 이 저장소는 원본 100LOG의 문제의식과 정보 처리 방식을 참고하여, 씬리더(Scene Reader Hub)와 연동 가능한 **서사연속성 판독 확장**을 새로 설계하기 위한 작업 저장소입니다.
 >
@@ -39,7 +39,7 @@
 |---|---|
 | 씬리더 | 다음 턴, 다음 장면, 미래 전개를 판독하는 확장 |
 | 100LOG류 | 최근 과거 사건, 약속, 비밀, 정정, 인물별 지식 차이를 기억하는 확장 |
-| 100LOG_FORK | 과거 사건을 현재 압력으로 해석하고, 다음 턴 조건으로 변환하는 씬리더 연동 모듈 |
+| 100LOG_FORK | 과거 사건을 현재 압력으로 해석하고, 다음 턴 조건으로 변환하는 씬리더 연동 확장 |
 
 본 모듈은 단순 기억 저장소가 아닙니다.
 
@@ -76,6 +76,7 @@ Do not treat the confession as resolved, casual, or repaired unless Vivienne res
 - 기존 기록과 새 메시지를 분리해 비교하는 방식
 - 완료·취소·갱신 판정 원칙
 - 요약·하이드 후 중요한 미해결 조건만 유지하는 문제의식
+- 관련 기록 선별을 위해 임베딩을 보조 랭커로 쓰는 아이디어
 
 ### 2.2 씬리더식으로 바꿀 것
 
@@ -87,7 +88,7 @@ Do not treat the confession as resolved, casual, or repaired unless Vivienne res
 - CardInjector식 프리셋 위치 지정 옵션 제공
 - 주입 블록은 `<STORY_CONTINUITY>`로 통일
 - append가 아니라 replace 방식으로 주입 찌꺼기 방지
-- 저장된 기록 전체를 매번 주입하지 않고, 현재 턴에 필요한 기록만 짧게 선별 주입
+- 실제 주입문은 저장 기록 전체가 아니라, 현재 턴에 필요한 짧은 제약 목록만 사용
 
 ---
 
@@ -110,8 +111,8 @@ Do not treat the confession as resolved, casual, or repaired unless Vivienne res
    - 기존 저장 기록을 add/update/resolve/cancel/supersede
 
 5. 프롬프트 조립
-   - 저장된 기록 전체가 아니라, 현재 턴에 필요한 활성 기록만 선별
-   - 선별된 기록을 짧은 제약 목록으로 압축
+   - 활성 기록 중 현재 씬에 관련 높은 것만 선별
+   - 필수 규칙 + 규칙 기반 점수 + 선택적 임베딩 보조 점수를 혼합
    - <STORY_CONTINUITY> 블록 생성
    - 기본 위치인 월드인포 후에 replace 삽입
 
@@ -240,6 +241,24 @@ JEV는 후보를 새로 창작하는 모델이 아니라, 후보의 근거와 �
 없으면 빈 배열
 ```
 
+### 5.4 JEV 사용 위치
+
+JEV는 매턴 주입 후보 선별에 기본적으로 사용하지 않습니다. 주입 선별까지 매번 JEV로 검수하면 정확도는 올라갈 수 있지만, 속도와 비용이 크게 늘고 기존 100LOG처럼 재검수·재작성 구조로 흐를 수 있습니다.
+
+JEV 권장 사용 위치:
+
+- 초기 베이스라인 후보 검증
+- 위험한 상태 변경 검증
+- 수동 정밀 재판독
+
+위험한 상태 변경 예:
+
+- `knowledge_boundary` 변경
+- `concealed_truth`가 노출 상태로 바뀜
+- `pending_commitment`를 resolved/cancelled 처리함
+- `user_correction`을 덮어씀
+- priority 5 기록을 종료하려 함
+
 ---
 
 ## 6. 제외 기능
@@ -272,8 +291,7 @@ JEV는 후보를 새로 창작하는 모델이 아니라, 후보의 근거와 �
 
 ```text
 서사연속성 저장
-→ 현재 턴에 필요한 기록만 선별
-→ 짧은 STORY_CONTINUITY 조립
+→ STORY_CONTINUITY 조립
 → 생성 전 프롬프트에 주입
 → 처음부터 틀릴 가능성을 줄임
 ```
@@ -313,11 +331,11 @@ v1 기본 카테고리입니다.
 
 ---
 
-## 8. 저장 구조
+## 8. 저장 데이터 구조
 
-저장은 상세하게 하되, 주입은 짧게 합니다.
+저장은 자세히 하되, 실제 주입은 짧게 합니다.
 
-저장 기록 예시:
+예시:
 
 ```json
 {
@@ -341,10 +359,9 @@ v1 기본 카테고리입니다.
       "quote": "Love."
     }
   ],
+  "retrieval_text": "Lucas Vivienne love confession unanswered unresolved tension Dominic unknown",
   "expires_when": "resolved_in_scene",
-  "source": "auto",
-  "created_at": 0,
-  "updated_at": 0
+  "source": "auto"
 }
 ```
 
@@ -358,112 +375,191 @@ v1 기본 카테고리입니다.
 | `scope` | next_turn, current_scene, recent_arc, carryover 등 |
 | `target` | 관련 인물 또는 대상 |
 | `past_event` | 과거에 발생한 근거 사건 |
-| `current_pressure` | 현재 장면에 남은 압력 또는 유효 상태 |
-| `next_turn_constraint` | 다음 턴에서 깨지면 안 되는 조건 |
+| `current_pressure` | 현재 장면에 남아 있는 압력 또는 유효 상태 |
+| `next_turn_constraint` | 다음 답변에서 깨지면 안 되는 제약 |
 | `knowledge` | 인물별 지식 상태 |
-| `evidence` | 원문 근거 |
-| `expires_when` | 만료 조건 |
-| `source` | baseline, delta, manual 등 |
+| `evidence` | 저장 검증용 원문 근거. 기본 주입에는 넣지 않음 |
+| `retrieval_text` | 규칙 기반/임베딩 선별용 짧은 검색 텍스트 |
 
 ---
 
-## 9. 주입 원칙: 저장 전체가 아니라 현재 턴 관련 기록만
+## 9. 주입 선별 원칙
 
-100LOG_FORK는 저장소에 많은 기록을 보관할 수 있지만, 실제 프롬프트에 매번 저장된 전체를 넣지 않습니다.
+### 9.1 저장 전체 주입 금지
 
-주입 원칙:
+저장된 서사연속성 기록 전체를 매번 프롬프트에 보내지 않습니다.
 
-```text
-저장은 충분히 자세하게 한다.
-주입은 현재 턴에 필요한 것만 짧게 한다.
-```
-
-즉, 씬판독기처럼 그때 씬에 필요한 내용만 선별합니다.
-
-### 9.1 선별 기준
-
-주입 후보는 다음 기준으로 고릅니다.
-
-1. `status`가 `active` 또는 `pending`인 기록
-2. 현재 씬판독 범위에 등장하거나 언급된 인물과 관련 있는 기록
-3. `priority`가 높은 기록
-4. `scope`가 `next_turn` 또는 `current_scene`인 기록
-5. 지식 차이, 비밀, 미해결 약속, 미해결 갈등처럼 다음 턴 오류를 직접 막는 기록
-6. 최근 delta에서 새로 추가·갱신된 기록
-
-낮은 우선순위의 과거 기록, 현재 장면과 무관한 기록, 이미 해결된 기록은 저장소에 남아 있어도 주입하지 않습니다.
-
-### 9.2 주입량 설정
-
-주입량은 씬리더 설정과 공유하지 않고, 100LOG_FORK 자체 설정으로 관리합니다.
-
-권장 기본값:
+기본 원칙:
 
 ```text
-주입 최대 개수: 5개
-중요 장면 최대 개수: 8개
-수동 전체 점검 모드: 최대 12개
+저장소: 자세하게 보관
+실제 주입: 현재 턴에 필요한 기록만 짧게 선별
 ```
 
-권장 UI:
+금지:
+
+- 저장 기록 전체 주입
+- 전체 JSON 주입
+- evidence quote 기본 주입
+- 전체 knowledge map 기본 주입
+- 긴 줄글 요약 주입
+
+허용:
+
+- 현재 턴 관련 기록만 선별
+- 짧은 bullet 제약 목록
+- 필요할 때만 knowledge boundary를 문장화
+- next_turn_constraint 중심 주입
+
+### 9.2 주입량은 100LOG_FORK 단독 설정
+
+주입량은 씬리더의 출력량, 판독량, 답변 길이 설정과 공유하지 않습니다.
+
+권장값:
 
 ```text
-주입량
-● 짧게: 최대 3개
-○ 기본: 최대 5개
-○ 자세히: 최대 8개
-○ 수동 점검: 최대 12개
+짧게: 최대 3개
+기본: 최대 5개
+중요 장면: 최대 8개
+수동 전체 확인: 최대 12개
 ```
 
-`짧게`와 `기본`을 배포 기본값으로 권장합니다.
+기본값은 `최대 5개`입니다.
 
-### 9.3 주입문 형식
+### 9.3 필수 포함 후보
 
-실제 주입문은 긴 줄글 설명이 아니라, 모델이 알아듣기 쉬운 짧은 제약 목록입니다.
+임베딩 점수와 상관없이 후보 풀에 반드시 올리는 항목입니다.
 
-나쁜 예:
+- pinned 된 기록
+- `user_correction`
+- 현재 등장/언급 인물과 직접 관련된 `knowledge_boundary`
+- 현재 등장/언급 인물과 직접 관련된 `concealed_truth`
+- 현재 메시지의 시간·장소·행동·참여자 단서와 겹치는 `pending_commitment`
+- 최근 1~2턴 안에 add/update된 기록
+- priority 5 기록
+
+이 항목들은 임베딩 유사도가 낮아도 빠지면 안 됩니다.
+
+### 9.4 규칙 기반 랭킹
+
+기본 선별은 규칙 기반으로 작동합니다.
+
+예시 점수 요소:
 
 ```text
-Lucas confessed love to Vivienne in the previous scene, and this was an important emotional moment because Vivienne had never received such a direct confession before. Dominic was not present at the time and therefore should not know about the exact wording of the confession unless he learns it later in the scene...
+type_weight
++ priority_weight
++ target_overlap
++ recent_delta_bonus
++ pinned_bonus
++ status_weight
 ```
 
-좋은 예:
+우선순위가 높은 type:
 
 ```text
-<STORY_CONTINUITY>
-Recent story constraints. Use only for the next reply.
-- [unresolved_tension] Lucas confessed love; Vivienne has not answered. Do not treat it as resolved.
-- [knowledge_boundary] Dominic did not hear the confession. Do not let him reference its exact wording.
-- [concealed_truth] Vivienne's Omega status remains dangerous if exposed to Wade. Preserve concealment pressure.
-</STORY_CONTINUITY>
+user_correction
+knowledge_boundary
+concealed_truth
+pending_commitment
+unresolved_tension
+misunderstanding
+causal_link
+relationship_shift
+recent_event
 ```
 
-### 9.4 주입문 압축 규칙
+### 9.5 임베딩은 보조 랭커로만 사용
 
-- 한 기록은 가능하면 한 줄로 압축
-- `past_event`, `current_pressure`, `next_turn_constraint`를 모두 줄글로 넣지 않음
-- 실제 주입에는 `next_turn_constraint` 중심으로 넣음
-- 필요할 때만 아주 짧은 원인 정보를 앞에 붙임
-- evidence quote는 기본 주입에 넣지 않음
-- JSON 전체를 그대로 주입하지 않음
-- 저장된 모든 knowledge map을 그대로 넣지 않고, 현재 턴에 필요한 지식 경계만 문장화
+임베딩은 관련 후보를 넓히는 데 유용하지만, 단독 결정권을 주지 않습니다.
 
-예시:
+이유:
+
+```text
+임베딩은 비슷한 것을 잘 찾지만, 반드시 필요한 것을 보장하지 않는다.
+```
+
+예를 들어 `Dominic does not know Lucas confessed love to Vivienne` 기록은 현재 장면에 Dominic이 등장하기만 해도 중요할 수 있습니다. 하지만 현재 메시지에 love/confession 키워드가 없다면 임베딩 점수가 낮게 나올 수 있습니다. 이런 기록은 `knowledge_boundary + target_overlap` 규칙으로 반드시 후보에 올라야 합니다.
+
+반대로 임베딩은 표현이 달라도 의미가 가까운 기록을 찾는 데 유용합니다.
+
+예:
 
 ```text
 저장 기록:
-Lucas confessed love to Vivienne; Vivienne has not answered; Dominic unknown; evidence quote exists.
+Vivienne's Omega status remains concealed from Wade.
 
-주입문:
-- [unresolved_tension] Lucas confessed love; Vivienne has not answered. Do not treat it as resolved.
-- [knowledge_boundary] Dominic did not hear the confession. Do not let him know exact wording.
+현재 장면:
+Her father summoned the doctor and asked why the suppressant records were missing.
 ```
+
+이런 경우 임베딩은 concealed truth 후보를 보강할 수 있습니다.
+
+### 9.6 혼합형 선별 방식
+
+권장 선별 흐름:
+
+```text
+1. 필수 포함 후보를 먼저 모은다.
+2. 나머지 active 기록 중 규칙 기반 점수 상위 후보를 모은다.
+3. 임베딩이 사용 가능하면 현재 씬 query_text와 기록 retrieval_text의 유사도를 계산한다.
+4. 임베딩 top 후보를 후보 풀에 보강한다.
+5. 최종 점수 = 규칙 기반 점수 + 임베딩 보조 점수.
+6. 상위 3~5개만 짧은 STORY_CONTINUITY bullet로 주입한다.
+```
+
+추천 모드:
+
+```text
+[주입 후보 선별 방식]
+● 안정형: 규칙 기반
+○ 혼합형: 규칙 기반 + 임베딩 보조
+○ 실험형: 임베딩 우선
+```
+
+기본값은 `안정형`입니다.
+권장 테스트값은 `혼합형`입니다.
+`실험형`은 기본 배포값으로 쓰지 않습니다.
+
+임베딩 실패 시에는 조용히 규칙 기반 선별로 fallback합니다.
 
 ---
 
-## 10. 주입 위치 설계
+## 10. 실제 주입문 형식
 
-### 10.1 기본 위치
+실제 모델에 들어가는 내용은 모델이 이해하기 쉽되 최대한 짧아야 합니다.
+
+권장 형식:
+
+```text
+<STORY_CONTINUITY>
+Use only for the next reply.
+- [unresolved_tension] Lucas confessed love; Vivienne has not answered. Do not treat it as resolved.
+- [knowledge_boundary] Dominic did not hear the confession. Do not let him reference exact wording.
+</STORY_CONTINUITY>
+```
+
+비권장 형식:
+
+```text
+<STORY_CONTINUITY>
+아래는 최근 20턴에서 추출된 서사연속성 기록입니다. 첫 번째 기록은 루카스가 비비안에게 사랑을 고백했다는 사실이며...
+...
+</STORY_CONTINUITY>
+```
+
+비권장 이유:
+
+- 토큰 낭비
+- 모델이 요약문을 대사처럼 반복할 가능성
+- 핵심 제약이 흐려짐
+- 씬리더 주입 블록과 중복 가능
+
+---
+
+## 11. 주입 위치
+
+### 기본 위치
 
 기본 주입 위치는 **월드인포 / 로어북 뒤**입니다.
 
@@ -480,16 +576,10 @@ Scene Reader 판독 블록
 이 위치를 기본으로 잡는 이유:
 
 1. 로어북은 고정 설정을 제공함
-2. STORY_CONTINUITY는 그 설정 위에서 최근 RP 때문에 생긴 유효 상태를 얹음
+2. 서사연속성은 그 설정 위에서 최근 RP 때문에 생긴 유효 상태를 얹음
 3. 씬리더 판독은 이 상태를 바탕으로 다음 턴을 판단함
 
-즉 순서는 다음과 같습니다.
-
-```text
-고정 설정 → 최근 서사 상태 → 다음 턴 판독
-```
-
-### 10.2 Depth 주입을 기본으로 쓰지 않는 이유
+### depth 주입 기본 제외
 
 서사연속성을 너무 깊은 위치에 넣으면 다음 문제가 생길 수 있습니다.
 
@@ -499,11 +589,11 @@ Scene Reader 판독 블록
 - 모델이 기억 규칙을 대사처럼 반복할 수 있음
 - 씬리더의 미래 판독보다 기억이 더 강하게 먹을 수 있음
 
-따라서 기본값은 월드인포 후로 하고, depth 또는 다른 프리셋 위치는 고급 옵션으로만 제공합니다.
+따라서 depth 또는 다른 프리셋 위치는 고급 옵션으로만 제공합니다.
 
-### 10.3 CardInjector식 위치 지정
+### CardInjector식 위치 지정
 
-고급 사용자를 위해 CardInjector 방식의 프리셋 위치 지정도 지원합니다.
+고급 사용자를 위해 카드인젝터 방식의 프리셋 위치 지정도 지원합니다.
 
 예정 옵션:
 
@@ -517,23 +607,25 @@ Scene Reader 판독 블록
 
 ---
 
-## 11. 삽입 방식: append가 아니라 replace
+## 12. 삽입 방식: append 금지, replace 기본
 
-서사연속성 블록은 매번 새로 덧붙이는 방식이 아니라, 기존 블록을 찾아 교체하는 방식으로 운용합니다.
+서사연속성 블록은 매번 새로 덧붙이는 방식이 아니라, 기존 블록을 찾아 교체합니다.
 
 ```text
 기존 <STORY_CONTINUITY>...</STORY_CONTINUITY> 블록이 있으면 교체
 없으면 지정된 위치에 삽입
 ```
 
-이유:
+이 방식을 쓰는 이유:
 
 - 이전 판독 결과가 찌꺼기로 남는 것을 방지
 - 중복 주입 방지
 - 확장 업데이트 후 구버전 블록을 안전하게 청소 가능
 - 저장된 기록과 실제 프롬프트 주입 상태를 분리 가능
 
-청소 버튼:
+### 청소 버튼
+
+다음 기능을 가진 청소 버튼을 둡니다.
 
 ```text
 [서사연속성 주입 청소]
@@ -550,41 +642,47 @@ Scene Reader 판독 블록
 
 ---
 
-## 12. 씬리더 연동 방식
+## 13. 씬리더허브와의 연동 원칙
 
-초기에는 100LOG_FORK 자체 UI로만 운용합니다. 씬리더 UI에는 아무 탭도 추가하지 않습니다.
+초기 버전에서는 씬리더허브 UI에 아무 탭도 추가하지 않습니다.
 
-다만 씬리더와 연동할 수 있도록 window API를 제공합니다.
+```text
+v1:
+100LOG_FORK 독립 UI + 독립 설정 + 독립 저장 + 독립 주입
+씬리더허브 UI 변경 없음
+```
 
-예상 API:
+다만 이후 연동을 위해 window API를 제공합니다.
+
+예정 API:
 
 ```js
 window.SceneReaderStoryContinuity = {
-  isAvailable() {},
-  isEnabled() {},
-  getStatus() {},
-  getRecords() {},
-  getInjectionBlock(context) {},
-  runBaseline(options) {},
-  runDelta(context) {},
-  clearInjection() {},
+  isAvailable(),
+  isEnabled(),
+  getStatus(),
+  getRecords(),
+  getInjectionBlock(),
+  runBaseline(),
+  runDelta(),
+  clearInjection()
 };
 ```
 
-씬리더는 설치 여부만으로 100LOG_FORK를 사용하지 않습니다. 반드시 100LOG_FORK 내부 사용 상태를 확인합니다.
+씬리더허브는 설치 여부가 아니라 `isEnabled()`를 기준으로 판단합니다.
 
 ```js
 const external = window.SceneReaderStoryContinuity;
 const useFork = Boolean(external?.isAvailable?.() && external?.isEnabled?.());
 
 if (useFork) {
-  const storyContinuityBlock = external.getInjectionBlock(sceneContext);
+  const storyContinuityBlock = external.getInjectionBlock();
 } else {
-  const storyContinuityBlock = sceneReaderDefaultStoryContinuity(sceneContext);
+  const storyContinuityBlock = sceneReaderDefaultStoryContinuity();
 }
 ```
 
-동작 기준:
+동작 원칙:
 
 ```text
 100LOG_FORK 미설치
@@ -597,98 +695,71 @@ if (useFork) {
 → 씬판독기 기본 서사연속성을 100LOG_FORK 결과로 대체
 ```
 
-즉, 대체 조건은 설치 여부가 아니라 **사용 ON/OFF 상태**입니다.
+즉, 두 서사연속성 블록을 동시에 주입하지 않습니다.
 
 ---
 
-## 13. UI 설계
+## 14. 씬리더허브 인물판독/임베딩에도 적용할 원칙
 
-초기 버전에서는 100LOG_FORK 자체 UI에서 모든 기능을 제공합니다.
+씬리더허브가 인물판독에 임베딩을 사용하는 경우에도 같은 주의가 필요합니다.
 
-권장 UI:
+임베딩은 후보를 넓히는 도구이지, 최종 포함/제외를 혼자 결정하는 도구가 아닙니다.
+
+허브 인물판독에도 다음 원칙을 적용하는 것이 좋습니다.
 
 ```text
-[100로그 포크]
-
-□ 사용
-
-초기 판독
-- 범위 선택
-- 연결모델 선택
-- JEV 키/검증 상태
-- [초기 베이스라인 판독]
-
-저장 기록
-- 활성 기록
-- 미해결 약속/계획
-- 인물별 지식 경계
-- 지난 기록
-- 수동 추가/수정/삭제/고정
-
-주입
-- 주입 사용 ON/OFF
-- 주입량: 짧게 / 기본 / 자세히 / 수동 점검
-- 주입 위치: 월드인포 후 / 사용자 지정
-- [주입 청소]
-
-연동
-- 씬판독기 연동 상태
-- 현재 100LOG_FORK 사용 여부
-- getInjectionBlock 미리보기
-
-진단
-- 마지막 작업
-- 마지막 오류
-- 오류 복사
+1. 현재 발화자, 직접 등장 인물, 최근 언급 인물, 수동 고정 인물 기록은 임베딩 점수와 무관하게 후보 풀에 포함한다.
+2. 임베딩은 표현이 달라도 의미가 가까운 보조 후보를 찾는 데 쓴다.
+3. 최종 주입은 임베딩 유사도 + 인물 등장 여부 + 관계 중요도 + 최근 delta + priority를 혼합한다.
+4. 임베딩 실패 시 기본 규칙 기반 선별로 fallback한다.
+5. 임베딩 점수가 낮다는 이유만으로 지식 경계, 금기, 사용자 정정사항, 현재 발화자의 핵심 반응 기준을 제외하지 않는다.
 ```
 
-나중에 씬리더에 병합할 때는 이 UI 구조를 거의 그대로 탭으로 옮길 수 있게 만듭니다.
+이 원칙은 100LOG_FORK뿐 아니라 씬리더허브의 인물판독 정확도에도 도움이 됩니다.
 
 ---
 
-## 14. 개발 단계
+## 15. 개발 단계
 
-### Phase 1. 독립 확장
+### Phase 1. 독립 확장 제작
 
-- 씬판독기 UI 수정 없음
-- 100LOG_FORK 자체 UI 제작
+- 100LOG_FORK 독립 UI 제작
+- 씬리더허브 UI 수정 없음
 - 초기 베이스라인 판독
-- 저장 기록 관리
-- 짧은 STORY_CONTINUITY 주입
-- 주입 위치 설정
-- 주입 청소
-- 생성 가로채기 없음
-- 자동 재작성 없음
+- 기록 저장/수정/삭제/고정
+- STORY_CONTINUITY 주입/청소
+- 규칙 기반 주입 선별
+- 선택적 혼합형 임베딩 선별
 
-### Phase 2. 선택 연동
+### Phase 2. 씬리더허브 선택 연동
 
 - window API 제공
-- 씬판독기가 100LOG_FORK 사용 ON 상태일 때만 결과 사용
-- 100LOG_FORK가 사용 OFF면 씬판독기 기본 서사연속성 유지
+- 100LOG_FORK 사용 ON일 때만 씬리더 기본 서사연속성 대체
+- 사용 OFF일 때는 씬리더 기본 서사연속성 유지
 
-### Phase 3. 씬판독기 탭 병합 검토
+### Phase 3. UI 병합 검토
 
-- 충분히 안정화된 뒤 씬판독기 내부에 탭 추가
-- 탭 이름은 씬판독기 쪽에서 별도 결정
-- 탭 내부에는 `기존 공달 100LOG 포크 기능` 문구 고정 표시
-- 외부 확장 UI를 거의 그대로 이식 가능하도록 컴포넌트화
+- 충분히 안정화된 뒤 씬리더허브에 탭 추가 검토
+- 탭 내부에 `기존 공달 100LOG 포크 기능` 표기 유지
+- 외부 확장 UI를 거의 그대로 옮길 수 있도록 v1 UI 구조를 설계
 
 ### Phase 4. 완전 통합 여부 결정
 
-- 외부 확장을 계속 독립 유지할지
-- 씬판독기 안으로 완전히 병합할지
-- 둘 다 유지할지 결정
+- 저장소 마이그레이션
+- 주입 설정 이전
+- 외부 확장 독립 유지 또는 허브 내장 여부 결정
 
 ---
 
-## 15. 핵심 원칙 요약
+## 16. 핵심 원칙 요약
 
 ```text
-100LOG_FORK는 저장된 모든 기억을 매번 주입하지 않는다.
-100LOG_FORK는 현재 턴에 필요한 서사연속성 제약만 짧게 주입한다.
-주입량은 씬리더와 공유하지 않고 독립 설정으로 관리한다.
-실제 주입문은 긴 줄글이 아니라 짧은 제약 목록이다.
-증거문, JSON 원문, 전체 knowledge map은 기본 주입에 넣지 않는다.
-설치 여부가 아니라 사용 ON 상태일 때만 씬리더 기본 서사연속성을 대체한다.
-생성 가로채기와 자동 재작성은 초기 버전에서 제외한다.
+100LOG_FORK는 저장된 기억을 전부 주입하는 확장이 아니다.
+100LOG_FORK는 현재 씬에 필요한 서사연속성 제약만 짧게 주입한다.
+임베딩은 단독 결정자가 아니라 보조 랭커다.
+필수 규칙은 임베딩 점수와 상관없이 후보에 포함한다.
+JEV는 매턴 주입 선별이 아니라 초기 검증과 위험한 상태 변경 검증에 쓴다.
+생성 가로채기와 자동 재작성은 기본 설계에서 제외한다.
+주입은 월드인포 후 기본, append가 아니라 replace 방식으로 한다.
+씬리더허브와 연동할 때는 설치 여부가 아니라 100LOG_FORK 사용 ON/OFF를 기준으로 한다.
 ```
